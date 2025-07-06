@@ -1,0 +1,144 @@
+name: Stock Crawler and Analysis
+
+on:
+  # 매 10분마다 실행
+  schedule:
+    - cron: "*/10 * * * *" # 매 10분마다 실행
+    # 다른 스케줄 옵션들:
+    # - cron: "*/30 * * * *"    # 매 30분마다
+    # - cron: "0 9-18 * * 1-5"  # 평일 오전 9시~오후 6시 매시간
+    # - cron: "*/15 9-17 * * 1-5" # 평일 오전 9시~오후 5시 매 15분
+
+  # 수동 실행 가능
+  workflow_dispatch:
+    inputs:
+      stock_code:
+        description: "크롤링할 종목코드"
+        required: false
+        default: "139480"
+      max_pages:
+        description: "최대 크롤링 페이지 수"
+        required: false
+        default: "10"
+
+  # 특정 브랜치 푸시 시 테스트 실행 (Python 파일 변경 시에만)
+  push:
+    # branches: [main]
+    paths:
+      - "**.py"
+      - "doc/requirements.txt"
+      - ".github/workflows/**"
+
+jobs:
+  crawl-and-analyze:
+    runs-on: ubuntu-latest
+
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r doc/requirements.txt
+
+      - name: Create .env file for GitHub Actions
+        run: |
+          cat > .env << EOF
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_CHARSET=utf8mb4
+          CRAWLING_DELAY=1.0
+          MAX_PAGES=${{ github.event.inputs.max_pages || '10' }}
+          USER_AGENT=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36
+          LOG_LEVEL=INFO
+          LOG_FILE=crawler.log
+          EOF
+
+      - name: Verify configuration
+        run: |
+          python source/config.py
+
+      - name: Test database connection
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, 'source')
+          from database import test_database_connection
+          if test_database_connection():
+              print('✅ Database connection successful')
+          else:
+              print('❌ Database connection failed')
+              exit(1)
+          "
+
+      - name: 🕷️ Run crawler and sentiment analysis
+        id: crawler
+        run: |
+          echo "🚀 Starting stock crawler and analysis..."
+          python source/main.py
+          echo "✅ Crawler and analysis completed"
+
+      - name: 📊 Generate analysis report
+        run: |
+          echo "📊 Generating analysis report..."
+          python source/analysis_report.py
+
+      - name: 📄 Upload logs as artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: crawler-logs-${{ github.run_number }}
+          path: |
+            *.log
+            crawler.log
+          retention-days: 7
+
+      - name: 📋 Create job summary
+        if: always()
+        run: |
+          echo "## 📊 주식 크롤링 및 감정분석 결과" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ⚙️ 실행 정보" >> $GITHUB_STEP_SUMMARY
+          echo "- **실행 시간**: $(date '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **종목 코드**: ${{ github.event.inputs.stock_code || '139480' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **크롤링 페이지**: ${{ github.event.inputs.max_pages || '10' }}페이지" >> $GITHUB_STEP_SUMMARY
+          echo "- **실행 트리거**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.crawler.outcome }}" = "success" ]; then
+            echo "### ✅ 실행 결과: 성공" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ 실행 결과: 실패" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # 로그 파일에서 주요 정보 추출
+          if [ -f "crawler.log" ]; then
+            echo "### 📝 실행 로그 (최근 20줄)" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -20 crawler.log >> $GITHUB_STEP_SUMMARY || echo "로그 파일을 읽을 수 없습니다." >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "### 🔗 관련 링크" >> $GITHUB_STEP_SUMMARY
+          echo "- [로그 다운로드](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "- [저장소 홈](https://github.com/${{ github.repository }})" >> $GITHUB_STEP_SUMMARY
+
+      - name: 🚨 Notify on failure
+        if: failure()
+        run: |
+          echo "❌ 크롤링 작업이 실패했습니다."
+          echo "로그를 확인하여 문제를 해결하세요."

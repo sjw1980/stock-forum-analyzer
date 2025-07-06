@@ -1,0 +1,12 @@
+requests
+pandas
+beautifulsoup4
+PyMySQL
+sqlalchemy
+numpy
+lxml
+python-dotenv
+matplotlib
+seaborn
+pandas
+numpy
