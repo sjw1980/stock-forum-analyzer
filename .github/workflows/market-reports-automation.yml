@@ -1,0 +1,188 @@
+name: Market Reports Automation
+
+on:
+  schedule:
+    - cron: '30 23 * * 0-4' # UTC 23시 30분 = KST 8시 30분 (일-목, 다음날 월-금) - Pre-market
+    - cron: '0 9 * * 1-5'   # UTC 9시 = KST 18시 (월-금) - Post-market
+    - cron: '0 13 * * 0'    # UTC 13시 일요일 = KST 일요일 22시 - Weekly
+    - cron: '0 0 1 * *'     # UTC 0시 매월 1일 = KST 매월 1일 9시 - Monthly
+  workflow_dispatch:
+    inputs:
+      report_type:
+        description: 'Report type to generate'
+        required: true
+        default: 'pre_market'
+        type: choice
+        options:
+        - pre_market
+        - post_market
+        - weekly
+        - monthly
+
+  push:
+    paths:
+      - "**.py"
+      - "doc/requirements.txt"
+      - ".github/workflows/**"
+
+jobs:
+  determine_report_type:
+    runs-on: ubuntu-latest
+    outputs:
+      report_type: ${{ steps.determine.outputs.report_type }}
+    steps:
+      - name: Determine report type based on schedule
+        id: determine
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "report_type=${{ github.event.inputs.report_type }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            echo "report_type=all" >> $GITHUB_OUTPUT
+          else
+            # 스케줄에 따라 보고서 타입 결정
+            hour=$(date -u +%H)
+            minute=$(date -u +%M)
+            day_of_week=$(date -u +%u)  # 1=월요일, 7=일요일
+            day_of_month=$(date -u +%d)
+            
+            if [ "$hour" = "23" ] && [ "$minute" = "30" ]; then
+              echo "report_type=pre_market" >> $GITHUB_OUTPUT
+            elif [ "$hour" = "09" ] && [ "$minute" = "00" ] && [ "$day_of_week" -le "5" ]; then
+              echo "report_type=post_market" >> $GITHUB_OUTPUT
+            elif [ "$hour" = "13" ] && [ "$minute" = "00" ] && [ "$day_of_week" = "7" ]; then
+              echo "report_type=weekly" >> $GITHUB_OUTPUT
+            elif [ "$hour" = "00" ] && [ "$minute" = "00" ] && [ "$day_of_month" = "01" ]; then
+              echo "report_type=monthly" >> $GITHUB_OUTPUT
+            else
+              echo "report_type=pre_market" >> $GITHUB_OUTPUT  # 기본값
+            fi
+          fi
+
+  generate_reports:
+    needs: determine_report_type
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r doc/requirements.txt 
+
+      - name: Create .env file for GitHub Actions
+        run: |
+          cat > .env << EOF
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_CHARSET=utf8mb4
+          CRAWLING_DELAY=1.0
+          MAX_PAGES=${{ github.event.inputs.max_pages || '10' }}
+          USER_AGENT=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36
+          LOG_LEVEL=INFO
+          LOG_FILE=crawler.log
+          EOF
+
+      - name: Verify configuration
+        run: |
+          python source/config.py
+
+      - name: Test database connection
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, 'source')
+          from database import test_database_connection
+          if test_database_connection():
+              print('✅ Database connection successful')
+          else:
+              print('❌ Database connection failed')
+              exit(1)
+          "
+
+      - name: Generate market report
+        env:
+          DB_PORT: ${{ secrets.DB_PORT || 3306 }}
+          REPORT_TYPE: ${{ needs.determine_report_type.outputs.report_type }}
+        run: |
+          if [ "$REPORT_TYPE" = "all" ]; then
+            echo "🧪 Testing all reports..."
+            
+            echo "🌅 Generating pre-market report..."
+            python source/pattern_analyzer.py pre_market $(date -d '+9 hours' '+%Y%m%d')
+            
+            echo "🌆 Generating post-market report..."
+            python source/pattern_analyzer.py post_market $(date -d '+9 hours' '+%Y%m%d')
+            
+            echo "📊 Generating weekly report..."
+            python source/pattern_analyzer.py weekly $(date -d '+9 hours' '+%Y%m%d')
+            
+            echo "📈 Generating monthly report..."
+            python source/pattern_analyzer.py monthly $(date -d '+9 hours' '+%Y%m%d')
+            
+            echo "✅ All reports generated successfully!"
+          else
+            case $REPORT_TYPE in
+              "pre_market")
+                echo "🌅 Generating pre-market report..."
+                python source/pattern_analyzer.py pre_market $(date -d '+9 hours' '+%Y%m%d')
+                ;;
+              "post_market")
+                echo "🌆 Generating post-market report..."
+                python source/pattern_analyzer.py post_market $(date -d '+9 hours' '+%Y%m%d')
+                ;;
+              "weekly")
+                echo "📊 Generating weekly report..."
+                python source/pattern_analyzer.py weekly $(date -d '+9 hours' '+%Y%m%d')
+                ;;
+              "monthly")
+                echo "📈 Generating monthly report..."
+                python source/pattern_analyzer.py monthly $(date -d '+9 hours' '+%Y%m%d')
+                ;;
+              *)
+                echo "❌ Unknown report type: $REPORT_TYPE"
+                exit 1
+                ;;
+            esac
+          fi
+      
+      - name: Commit and push changes
+        env:
+          REPORT_TYPE: ${{ needs.determine_report_type.outputs.report_type }}
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add .
+          
+          if [ "$REPORT_TYPE" = "all" ]; then
+            commit_message="테스트: 모든 보고서 생성 및 README.md 업데이트"
+          else
+            case $REPORT_TYPE in
+              "pre_market")
+                commit_message="자동 장전 보고서 및 README.md 업데이트"
+                ;;
+              "post_market")
+                commit_message="자동 장마감 보고서 및 README.md 업데이트"
+                ;;
+              "weekly")
+                commit_message="자동 주간 보고서 및 README.md 업데이트"
+                ;;
+              "monthly")
+                commit_message="자동 월간 보고서 및 README.md 업데이트"
+                ;;
+            esac
+          fi
+          
+          git diff --cached --quiet || git commit -m "$commit_message"
+          branch_name=$(echo "${GITHUB_REF#refs/heads/}")
+          git push origin HEAD:$branch_name
