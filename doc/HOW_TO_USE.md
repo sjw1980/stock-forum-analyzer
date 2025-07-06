@@ -18,8 +18,8 @@
 ### 1. 저장소 클론
 
 ```bash
-git clone https://github.com/your-username/python_crawling.git
-cd python_crawling
+git clone https://github.com/sjw1980/stock-forum-analyzer.git
+cd stock-forum-analyzer
 ```
 
 ### 2. Python 패키지 설치
