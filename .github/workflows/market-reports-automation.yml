@@ -39,22 +39,30 @@ jobs:
           elif [ "${{ github.event_name }}" = "push" ]; then
             echo "report_type=all" >> $GITHUB_OUTPUT
           else
-            # 스케줄에 따라 보고서 타입 결정
+            # 스케줄에 따라 보고서 타입 결정 - 수정된 로직
             hour=$(date -u +%H)
             minute=$(date -u +%M)
             day_of_week=$(date -u +%u)  # 1=월요일, 7=일요일
             day_of_month=$(date -u +%d)
             
-            if [ "$hour" = "23" ] && [ "$minute" = "30" ]; then
+            echo "Debug: Current time is $hour:$minute, day_of_week=$day_of_week, day_of_month=$day_of_month"
+            
+            # 시간대별 보고서 타입 결정 (넓은 범위로 설정)
+            if [ "$hour" = "23" ]; then
               echo "report_type=pre_market" >> $GITHUB_OUTPUT
-            elif [ "$hour" = "09" ] && [ "$minute" = "00" ] && [ "$day_of_week" -le "5" ]; then
+              echo "Detected: Pre-market time (23:xx UTC)"
+            elif [ "$hour" = "09" ] && [ "$day_of_week" -ge "1" ] && [ "$day_of_week" -le "5" ]; then
               echo "report_type=post_market" >> $GITHUB_OUTPUT
-            elif [ "$hour" = "13" ] && [ "$minute" = "00" ] && [ "$day_of_week" = "7" ]; then
+              echo "Detected: Post-market time (09:xx UTC, weekday)"
+            elif [ "$hour" = "13" ] && [ "$day_of_week" = "7" ]; then
               echo "report_type=weekly" >> $GITHUB_OUTPUT
-            elif [ "$hour" = "00" ] && [ "$minute" = "00" ] && [ "$day_of_month" = "01" ]; then
+              echo "Detected: Weekly report time (13:xx UTC Sunday)"
+            elif [ "$hour" = "00" ] && [ "$day_of_month" = "01" ]; then
               echo "report_type=monthly" >> $GITHUB_OUTPUT
+              echo "Detected: Monthly report time (00:xx UTC, 1st day)"
             else
               echo "report_type=pre_market" >> $GITHUB_OUTPUT  # 기본값
+              echo "Default: Pre-market (no specific schedule matched)"
             fi
           fi
 
