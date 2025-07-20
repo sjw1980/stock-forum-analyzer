@@ -5,7 +5,7 @@ on:
     - cron: '30 23 * * 0-4' # UTC 23시 30분 = KST 8시 30분 (일-목, 다음날 월-금) - Pre-market
     - cron: '0 9 * * 1-5'   # UTC 9시 = KST 18시 (월-금) - Post-market
     - cron: '0 13 * * 0'    # UTC 13시 일요일 = KST 일요일 22시 - Weekly
-    - cron: '0 0 1 * *'     # UTC 0시 매월 1일 = KST 매월 1일 9시 - Monthly
+    - cron: '0 3 1 * *'     # UTC 3시 매월 1일 = KST 매월 1일 12시 - Monthly
   workflow_dispatch:
     inputs:
       report_type:
@@ -31,40 +31,28 @@ jobs:
     outputs:
       report_type: ${{ steps.determine.outputs.report_type }}
     steps:
-      - name: Determine report type based on schedule
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Determine report type using Python script
         id: determine
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_INPUTS_REPORT_TYPE: ${{ github.event.inputs.report_type }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "report_type=${{ github.event.inputs.report_type }}" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            echo "report_type=all" >> $GITHUB_OUTPUT
-          else
-            # 스케줄에 따라 보고서 타입 결정 - 수정된 로직
-            hour=$(date -u +%H)
-            minute=$(date -u +%M)
-            day_of_week=$(date -u +%u)  # 1=월요일, 7=일요일
-            day_of_month=$(date -u +%d)
-            
-            echo "Debug: Current time is $hour:$minute, day_of_week=$day_of_week, day_of_month=$day_of_month"
-            
-            # 시간대별 보고서 타입 결정 (넓은 범위로 설정)
-            if [ "$hour" = "23" ]; then
-              echo "report_type=pre_market" >> $GITHUB_OUTPUT
-              echo "Detected: Pre-market time (23:xx UTC)"
-            elif [ "$hour" = "09" ] && [ "$day_of_week" -ge "1" ] && [ "$day_of_week" -le "5" ]; then
-              echo "report_type=post_market" >> $GITHUB_OUTPUT
-              echo "Detected: Post-market time (09:xx UTC, weekday)"
-            elif [ "$hour" = "13" ] && [ "$day_of_week" = "7" ]; then
-              echo "report_type=weekly" >> $GITHUB_OUTPUT
-              echo "Detected: Weekly report time (13:xx UTC Sunday)"
-            elif [ "$hour" = "00" ] && [ "$day_of_month" = "01" ]; then
-              echo "report_type=monthly" >> $GITHUB_OUTPUT
-              echo "Detected: Monthly report time (00:xx UTC, 1st day)"
-            else
-              echo "report_type=pre_market" >> $GITHUB_OUTPUT  # 기본값
-              echo "Default: Pre-market (no specific schedule matched)"
-            fi
-          fi
+          # 현재 UTC+9 시간을 날짜와 시간으로 전달
+          current_kst_date=$(date -d '+9 hours' '+%Y-%m-%d')
+          current_kst_time=$(date -d '+9 hours' '+%H:%M')
+          
+          echo "Current KST date: $current_kst_date"
+          echo "Current KST time: $current_kst_time"
+          
+          python source/determine_report_type.py --date "$current_kst_date" --test-time "$current_kst_time"
 
   generate_reports:
     needs: determine_report_type
