@@ -45,14 +45,14 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_EVENT_INPUTS_REPORT_TYPE: ${{ github.event.inputs.report_type }}
         run: |
-          # 현재 UTC+9 시간을 날짜로 전달
+          # 현재 UTC+9 시간을 날짜와 시간으로 전달
           current_kst_date=$(date -d '+9 hours' '+%Y-%m-%d')
-          current_utc_time=$(date -u '+%H:%M')
+          current_kst_time=$(date -d '+9 hours' '+%H:%M')
           
           echo "Current KST date: $current_kst_date"
-          echo "Current UTC time: $current_utc_time"
+          echo "Current KST time: $current_kst_time"
           
-          python source/determine_report_type.py --date "$current_kst_date" --test-time "$current_utc_time"
+          python source/determine_report_type.py --date "$current_kst_date" --test-time "$current_kst_time"
 
   generate_reports:
     needs: determine_report_type
